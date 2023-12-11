@@ -166,7 +166,6 @@ fun DeliveryScreen(viewModel: MainViewModel = viewModel()) {
     }
 
     Box {
-        SnackbarHost(hostState = snackbarState, modifier = Modifier.align(Alignment.BottomCenter))
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -267,6 +266,8 @@ fun DeliveryScreen(viewModel: MainViewModel = viewModel()) {
                 }
             }
         }
+
+        SnackbarHost(hostState = snackbarState, modifier = Modifier.align(Alignment.BottomCenter))
     }
 }
 
