@@ -9,4 +9,6 @@ sealed class AppEvents {
     data class OnOfferCodeChanged(val value: String): AppEvents()
     data class AddPackageToStorage(val pack: Package): AppEvents()
     data class AddPackageToVehicle(val pack: Package, val vehicle: Lorry): AppEvents()
+    data class OnPackageDelivered(val vehicleName: String, val pack: Package): AppEvents()
+    data class OnErrorEvent(val message: String): AppEvents()
 }

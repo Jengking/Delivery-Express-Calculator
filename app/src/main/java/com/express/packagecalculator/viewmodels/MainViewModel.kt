@@ -3,14 +3,16 @@ package com.express.packagecalculator.viewmodels
 import android.util.Log
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.focus.FocusDirection
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.express.packagecalculator.events.AppEvents
+import com.express.packagecalculator.events.UiEvent
 import com.express.packagecalculator.model.Lorry
 import com.express.packagecalculator.model.Package
+import com.express.packagecalculator.model.VehicalStatus
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
-import kotlin.math.absoluteValue
 
 class MainViewModel: ViewModel() {
 
@@ -22,6 +24,7 @@ class MainViewModel: ViewModel() {
     val totalDeliveryCost = mutableStateOf(0.0)
     val subtractAmount = mutableStateOf(0.0)
     val criteriaMet = mutableStateOf("")
+    val calculatedEstimationTime = mutableStateOf(0.0)
 
     private val offers: HashMap<String, Int> = HashMap()
     private val _storage = mutableStateListOf<Package>()
@@ -36,6 +39,9 @@ class MainViewModel: ViewModel() {
     private val _inTransitVehicle = mutableStateListOf<Lorry>()
     val inTransitVehicles: List<Lorry> = _inTransitVehicle
 
+    private val _eventFlow = MutableSharedFlow<UiEvent>()
+    val eventFlow = _eventFlow.asSharedFlow()
+
     init {
         loadInitialData()
     }
@@ -44,7 +50,7 @@ class MainViewModel: ViewModel() {
         offers["OFR001"] = 10
         offers["OFR002"] = 7
         offers["OFR003"] = 5
-        getVehiclesAvailbility()
+        getVehiclesAvailability()
     }
 
     fun onEvent(event: AppEvents) {
@@ -77,27 +83,62 @@ class MainViewModel: ViewModel() {
                 viewModelScope.launch {
                     val lorry = _availableVehicle.findLast { it.name == event.vehicle.name }
                     if (lorry != null) {
-                        lorry.packages.add(event.pack)
+                        val item = event.pack
+                        item.travelTime = item.distance / lorry.speed
+                        lorry.packages.add(item)
                         _storage.remove(event.pack)
-                        getVehiclesAvailbility()
+                        getVehiclesAvailability()
                     }
+                }
+            }
+            is AppEvents.OnPackageDelivered -> {
+                viewModelScope.launch {
+                    val lorry = _inTransitVehicle.find { it.name == event.vehicleName }
+                    lorry?.packages?.remove(event.pack)
+                    if (checkVehicleFinishDelivery(lorry)) {
+                        _inTransitVehicle.remove(lorry)
+                        lorry!!.status = VehicalStatus.AVAILABLE
+                        _availableVehicle.add(lorry)
+                    }
+                    calculatedEstimationTime.value = calculateEstimatedTime()
+                }
+            }
+
+            is AppEvents.OnErrorEvent -> {
+                viewModelScope.launch {
+                    _eventFlow.emit(UiEvent.ShowError(message = event.message))
                 }
             }
             else -> {}
         }
     }
 
-    private fun getVehiclesAvailbility() {
+    private fun checkVehicleFinishDelivery(vehicle: Lorry?): Boolean {
+        return vehicle != null && vehicle.packages.size == 0 && vehicle.packages.sumOf { it.weight } == 0.0
+    }
+
+    private fun calculateEstimatedTime(): Double {
+        var time = 0.0
+        _inTransitVehicle.forEach {
+            time += it.packages.sumOf { pack -> pack.travelTime }
+        }
+        return time * 2
+    }
+
+    private fun getVehiclesAvailability() {
         _vehicles.forEach { lorry ->
             val totalWeight = lorry.packages.sumOf { it.weight }
-            if (totalWeight <= lorry.maxWeight) {
-                if (!_availableVehicle.contains(lorry)) {
-                    _availableVehicle.add(lorry)
-                }
-            } else {
+            if (totalWeight >= lorry.maxWeight) {
                 if (!_inTransitVehicle.contains(lorry)) {
                     _availableVehicle.remove(lorry)
+                    lorry.status = VehicalStatus.DELIVERING
                     _inTransitVehicle.add(lorry)
+                    calculatedEstimationTime.value = calculateEstimatedTime()
+                }
+            } else {
+                if (!_availableVehicle.contains(lorry)) {
+                    lorry.status = VehicalStatus.LOADING
+                    _availableVehicle.add(lorry)
                 }
             }
         }

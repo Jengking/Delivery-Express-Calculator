@@ -31,6 +31,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -38,11 +39,15 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,10 +74,13 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.express.packagecalculator.events.AppEvents
+import com.express.packagecalculator.events.UiEvent
 import com.express.packagecalculator.model.Lorry
 import com.express.packagecalculator.model.Package
+import com.express.packagecalculator.model.VehicalStatus
 import com.express.packagecalculator.ui.theme.PackageCalculatorTheme
 import com.express.packagecalculator.viewmodels.MainViewModel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
@@ -129,6 +137,7 @@ fun MainContent() {
                 0 -> {
                     PackageScreen(viewModel)
                 }
+
                 else -> {
                     DeliveryScreen(viewModel)
                 }
@@ -141,47 +150,121 @@ fun MainContent() {
 @Composable
 fun DeliveryScreen(viewModel: MainViewModel = viewModel()) {
 
+    val snackbarState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
-
-    Column(modifier = Modifier
-        .fillMaxSize()
-        .padding(top = 32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(text = "Package Remaining: ${viewModel.storage.size}")
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(text = "Vehicles Available: ${viewModel.availableVehicle.size}", modifier = Modifier.weight(.5f))
-            Text(text = "Current Time: 0 hrs", modifier = Modifier.weight(.5f))
-        }
-        Divider()
-        //available package
-        if (viewModel.storage.isNotEmpty()) {
-            Text(text = "Packages in Storage")
-            LazyColumn(modifier = Modifier.fillMaxWidth(), userScrollEnabled = false) {
-                viewModel.storage.forEachIndexed { index, p ->
-                    item {
-                        StorageItem(availableVehicle = viewModel.availableVehicle, item = p,
-                            onError = {},
-                            onClicked = {
-                                viewModel.onEvent(AppEvents.AddPackageToVehicle(pack = p, vehicle = it))
-                            }
-                        )
+    LaunchedEffect(key1 = true) {
+        viewModel.eventFlow.collectLatest { event ->
+            when(event) {
+                is UiEvent.ShowError -> {
+                    scope.launch {
+                        snackbarState.showSnackbar(message = event.message, withDismissAction = false, duration = SnackbarDuration.Short)
                     }
                 }
             }
-            Divider()
         }
-        //vehicles info
-        if (viewModel.availableVehicle.isNotEmpty()) {
-            Text(text = "Vehicle Information")
-            LazyColumn(modifier = Modifier.fillMaxWidth(), userScrollEnabled = false) {
+    }
 
+    Box {
+        SnackbarHost(hostState = snackbarState, modifier = Modifier.align(Alignment.BottomCenter))
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(text = "Package Remaining: ${viewModel.storage.size}")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Vehicles Available: ${viewModel.availableVehicle.size}",
+                    modifier = Modifier.weight(.5f)
+                )
+                Text(text = "Current Time: ${String.format("%.2f hrs", viewModel.calculatedEstimationTime.value)}", modifier = Modifier.weight(.5f))
             }
             Divider()
-        }
-        //estimation
-        if (viewModel.inTransitVehicles.isNotEmpty()) {
-            Text(text = "Vehicle Availability Estimations")
-            LazyColumn(modifier = Modifier.fillMaxWidth(), userScrollEnabled = false) {
+            //available package
+            if (viewModel.storage.isNotEmpty()) {
+                Text(text = "Packages in Storage")
+                LazyColumn(modifier = Modifier.fillMaxWidth(), userScrollEnabled = false) {
+                    viewModel.storage.forEachIndexed { index, p ->
+                        item {
+                            StorageItem(availableVehicle = viewModel.availableVehicle, item = p,
+                                onError = {
+                                    viewModel.onEvent(AppEvents.OnErrorEvent("Reach max weight capacity or no vehicle available."))
+                                },
+                                onClicked = {
+                                    viewModel.onEvent(
+                                        AppEvents.AddPackageToVehicle(
+                                            pack = p,
+                                            vehicle = it
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+                Divider()
+            }
+            //vehicles info
+            val atLoading :List<Lorry> = viewModel.availableVehicle.filter { it.status == VehicalStatus.LOADING }
+            if (atLoading.isNotEmpty()) {
+                Text(text = "Vehicle Load Information")
+                val loadingVehicle = viewModel.availableVehicle.filter { it.packages.isNotEmpty() }
+                LazyColumn(modifier = Modifier.fillMaxWidth(), userScrollEnabled = true) {
+                    items(loadingVehicle) {
+                        DeliveryItem(lorry = it)
+                    }
+                }
+                Divider()
+            }
+            //in transit
+            val inTransit = viewModel.inTransitVehicles.filter { it.status == VehicalStatus.DELIVERING }
+            if (inTransit.isNotEmpty()) {
+                Text(text = "Vehicle Delivery Estimations")
+                LazyColumn(modifier = Modifier.fillMaxWidth(), userScrollEnabled = false) {
+                    items(inTransit) {
+                        DeliveryItem(lorry = it) { vehicleName, pack ->
+                            viewModel.onEvent(AppEvents.OnPackageDelivered(vehicleName, pack))
+                        }
+                    }
+                }
+                Divider()
+            }
+            //Estimation
+            val loadingTotal = viewModel.availableVehicle.filter { lorry -> lorry.packages.sumOf { it.travelTime } != 0.0  }
+            if (loadingTotal.isNotEmpty()) {
+                Column {
+                    loadingTotal.forEach { lorry ->
+                        val packTime = (lorry.packages.sumOf { it.travelTime }) * 2
+                        if (packTime != 0.0) {
+                            Text(text = "${lorry.name} will be available after ${String.format("%.2f hrs", packTime)}")
+                        }
+                    }
+                    Divider()
+                }
+            }
 
+            val deliveryTotal = viewModel.inTransitVehicles.filter { lorry -> lorry.packages.sumOf { it.travelTime } != 0.0 }
+            if (deliveryTotal.isNotEmpty()) {
+                if (deliveryTotal.size > 1) {
+                    deliveryTotal.forEachIndexed { index, lorry ->
+                        val packTime = (lorry.packages.sumOf { it.travelTime }) * 2
+                        if (index == 0) {
+                            Text(text = "${lorry.name} will be available first after ${String.format("%.2f hrs", packTime)}")
+                        } else {
+                            Text(text = "${lorry.name} will be available after ${String.format("%.2f hrs", packTime)}")
+                        }
+                    }
+                } else {
+                    val packTime = (deliveryTotal[0].packages.sumOf { it.travelTime }) * 2
+                    if (packTime != 0.0) {
+                        Text(text = "${deliveryTotal[0].name} will be available first after ${String.format("%.2f hrs", packTime)}")
+                    }
+                }
             }
         }
     }
@@ -258,7 +341,7 @@ fun PackageScreen(viewModel: MainViewModel = viewModel()) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(text = "Offer code", modifier = Modifier.weight(1f))
+            Text(text = "Offer code (If any)", modifier = Modifier.weight(1f))
             BasicInputField(
                 interactionSource = interactionSource,
                 modifier = Modifier,
@@ -278,9 +361,11 @@ fun PackageScreen(viewModel: MainViewModel = viewModel()) {
             }
         }
 
-        Spacer(modifier = Modifier
-            .fillMaxWidth()
-            .height(32.dp))
+        Spacer(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(32.dp)
+        )
 
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(text = "Delivery Cost", modifier = Modifier.weight(1f))
@@ -306,25 +391,30 @@ fun PackageScreen(viewModel: MainViewModel = viewModel()) {
 
         Divider()
 
-        Box(modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 32.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 32.dp), contentAlignment = Alignment.Center
+        ) {
 
-            Button(onClick = {
-                if (packageWeight.value.isNotEmpty() && deliveryDistance.value.isNotEmpty() && offerCode.value.isNotEmpty()) {
-                    val pack = Package(
-                        weight = packageWeight.value.toDouble(),
-                        distance = deliveryDistance.value.toDouble(),
-                        discountCode = offerCode.value,
-                        totalCost = viewModel.totalDeliveryCost.value,
-                        name = "PKG${Random.nextInt(1, 1000)}"
-                    )
-                    viewModel.onEvent(AppEvents.AddPackageToStorage(pack))
-                    packageWeight.value = "0"
-                    deliveryDistance.value = "0"
-                    offerCode.value = ""
-                }
-            }, shape = RoundedCornerShape(16.dp),) {
+            Button(
+                onClick = {
+                    if (packageWeight.value.isNotEmpty() && deliveryDistance.value.isNotEmpty()) {
+                        val pack = Package(
+                            weight = packageWeight.value.toDouble(),
+                            distance = deliveryDistance.value.toDouble(),
+                            discountCode = offerCode.value,
+                            totalCost = viewModel.totalDeliveryCost.value,
+                            name = "PKG${Random.nextInt(1, 1000)}"
+                        )
+                        viewModel.onEvent(AppEvents.AddPackageToStorage(pack))
+                        packageWeight.value = "0"
+                        deliveryDistance.value = "0"
+                        offerCode.value = ""
+                    }
+                },
+                shape = RoundedCornerShape(16.dp),
+            ) {
                 Text(text = "Add Package to storage", color = Color.White)
             }
         }
@@ -332,25 +422,95 @@ fun PackageScreen(viewModel: MainViewModel = viewModel()) {
 }
 
 @Composable
-private fun StorageItem(availableVehicle: List<Lorry> = emptyList(),  item: Package, onClicked: (Lorry) -> Unit = {}, onError: () -> Unit = {}) {
+private fun DeliveryItem(
+    lorry: Lorry,
+    onDeliverPackage: (String, Package) -> Unit = { vehicleName, packageItem ->}
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            verticalAlignment = if (lorry.packages.size > 1) Alignment.Top else Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            val statuslbl = when(lorry.status) {
+                VehicalStatus.LOADING -> "Loaded "
+                VehicalStatus.DELIVERING -> "Delivering "
+                else -> ""
+            }
+            Text(text = lorry.name, style = TextStyle(fontWeight = FontWeight.Bold))
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                lorry.packages.forEach {
+                    Row(modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text(text = "$statuslbl ${it.name}", style = TextStyle(fontWeight = FontWeight.Bold))
+                            Text(text = "${it.distance} km/${lorry.speed} km/hrs", color = Color.DarkGray, style = TextStyle(fontSize = 12.sp))
+                        }
+                        Text(text = String.format("%.2f hrs", it.travelTime), color = Color.Black, style = TextStyle(fontWeight = FontWeight.Bold), textAlign = TextAlign.Center)
+
+                        if (lorry.status == VehicalStatus.DELIVERING) {
+                            Image(
+                                imageVector = Icons.Default.Clear,
+                                contentDescription = "deliver package",
+                                modifier = Modifier.clickable {
+                                    onDeliverPackage(lorry.name, it)
+                                })
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StorageItem(
+    availableVehicle: List<Lorry> = emptyList(),
+    item: Package,
+    onClicked: (Lorry) -> Unit = {},
+    onError: () -> Unit = {}
+) {
     var expanded by remember { mutableStateOf(false) }
 
-    Card(modifier = Modifier
-        .fillMaxWidth()
-        .padding(8.dp)) {
-        Row(modifier = Modifier
+    Card(
+        modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            .padding(8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
 
-            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 Text(text = item.name, style = TextStyle(fontWeight = FontWeight.Bold))
                 Text(text = "${item.weight}kg")
                 Text(text = "${item.distance}km")
             }
 
-            Image(imageVector = Icons.Default.Add, contentDescription = "Add", modifier = Modifier.clickable {
-                expanded = !expanded
-            })
+            Image(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Add",
+                modifier = Modifier.clickable {
+                    expanded = !expanded
+                })
 
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 availableVehicle.forEachIndexed { index, lorry ->
